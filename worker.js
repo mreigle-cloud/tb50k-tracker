@@ -1,0 +1,45 @@
+import { ROUTE, CUM_MILES, COURSE_MILES } from './route.js';
+
+const HTML = `<!doctype html>
+<html><head><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>Madeline — Taco Bell 50K Tracker</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" crossorigin="" />
+<style>
+:root{color-scheme:dark}*{box-sizing:border-box}body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#111;color:#fff}header{padding:18px 18px 12px;background:#151515;position:sticky;top:0;z-index:5;border-bottom:1px solid #292929}h1{font-size:21px;margin:0 0 4px}p{margin:0;color:#aaa;font-size:13px}.stats{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;padding:10px;background:#111}.card{background:#1b1b1b;border-radius:12px;padding:12px;text-align:center}.big{font-size:24px;font-weight:800}.label{font-size:11px;color:#999;margin-top:2px}.status{padding:10px 14px;background:#191919;text-align:center;font-weight:700}.status.live{color:#71e6a5}.status.finished{color:#ffd166}#map{height:52vh;min-height:360px}.updates{padding:14px}.update{background:#1b1b1b;border-radius:14px;margin-bottom:10px;overflow:hidden}.update img{width:100%;display:block;max-height:420px;object-fit:cover}.caption{padding:12px;font-size:15px;line-height:1.4}.time{padding:0 12px 10px;color:#888;font-size:11px}.foot{padding:16px;text-align:center;color:#666;font-size:11px}
+</style></head><body>
+<header><h1>Madeline — Taco Bell 50K</h1><p>The Loco Strikes Back • live race tracker</p></header>
+<div id="status" class="status">Waiting for race updates…</div>
+<div class="stats"><div class="card"><div id="done" class="big">0.00</div><div class="label">MILES COMPLETED</div></div><div class="card"><div id="remain" class="big">31.68</div><div class="label">MILES REMAINING</div></div><div class="card"><div id="elapsed" class="big">0:00:00</div><div class="label">ELAPSED</div></div></div>
+<div id="map"></div><section class="updates" id="updates"><div style="color:#888;text-align:center;padding:20px">No updates yet.</div></section><div class="foot">Location and updates are supplied by Madeline through Telegram.</div>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" crossorigin=""></script>
+<script>
+const course=${JSON.stringify(ROUTE)}, total=${COURSE_MILES};
+const map=L.map('map').setView(course[0],14);L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png',{maxZoom:19,attribution:'&copy; OpenStreetMap contributors'}).addTo(map);
+const line=L.polyline(course,{weight:5,opacity:.75}).addTo(map);map.fitBounds(line.getBounds(),{padding:[18,18]});
+let marker=null,state=null;
+function fmt(s){s=Math.max(0,Math.floor(s));return Math.floor(s/3600)+':'+String(Math.floor(s%3600/60)).padStart(2,'0')+':'+String(s%60).padStart(2,'0')}
+function updateUI(){if(!state)return;const done=Number(state.miles||0), rem=Math.max(0,total-done);document.getElementById('done').textContent=done.toFixed(2);document.getElementById('remain').textContent=rem.toFixed(2);let elapsed=state.startedAt?((state.finishedAt||Date.now())-state.startedAt)/1000:0;document.getElementById('elapsed').textContent=fmt(elapsed);const el=document.getElementById('status');el.textContent=state.status==='finished'?'🏁 FINISHED':state.status==='running'?'🔴 LIVE':'Waiting for race updates…';el.className='status '+state.status;if(marker&&state.lat)marker.setLatLng([state.lat,state.lon]);}
+async function load(){try{const r=await fetch('/api/state',{cache:'no-store'});state=await r.json();updateUI();const u=await fetch('/api/updates',{cache:'no-store'});const items=await u.json();document.getElementById('updates').innerHTML=items.length?items.map(x=>`<article class="update">${x.photo?`<img src="/photo/${encodeURIComponent(x.photo)}" loading="lazy">`:''}${x.text?`<div class="caption">${escapeHtml(x.text)}</div>`:''}<div class="time">${new Date(x.time).toLocaleString()}</div></article>`).join(''):'<div style="color:#888;text-align:center;padding:20px">No updates yet.</div>';if(state.lat&&!marker){marker=L.marker([state.lat,state.lon]).addTo(map).bindPopup('Madeline');map.setView([state.lat,state.lon],15)}}catch(e){console.error(e)}}
+function escapeHtml(s){return String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]))}
+load();setInterval(load,10000);setInterval(updateUI,1000);
+</script></body></html>`;
+
+const mem = { state:null, updates:[] };
+async function getJSON(env,key,fallback){ if(env.TRACKER_KV) { const v=await env.TRACKER_KV.get(key); return v?JSON.parse(v):fallback; } return key==='state'?mem.state:mem.updates; }
+async function putJSON(env,key,value){ if(env.TRACKER_KV) return env.TRACKER_KV.put(key,JSON.stringify(value)); if(key==='state') mem.state=value; else mem.updates=value; }
+function json(x,init={}){return new Response(JSON.stringify(x),{headers:{'content-type':'application/json; charset=utf-8','cache-control':'no-store'},...init})}
+function dist(a,b){const R=3958.7613, p=Math.PI/180, la1=a[0]*p,la2=b[0]*p, dlat=(b[0]-a[0])*p,dlon=(b[1]-a[1])*p;const h=Math.sin(dlat/2)**2+Math.cos(la1)*Math.cos(la2)*Math.sin(dlon/2)**2;return R*2*Math.asin(Math.sqrt(h));}
+function nearest(lat,lon,lastIndex=0){let best=lastIndex,bestD=Infinity;const start=Math.max(0,lastIndex-8),end=Math.min(ROUTE.length-1,lastIndex+180);for(let i=start;i<=end;i++){const d=dist([lat,lon],ROUTE[i]);if(d<bestD){bestD=d;best=i;}}if(bestD>0.25){for(let i=0;i<ROUTE.length;i++){const d=dist([lat,lon],ROUTE[i]);if(d<bestD){bestD=d;best=i;}}}return {index:best,d:bestD};}
+async function telegram(env,method,body){const r=await fetch(`https://api.telegram.org/bot${env.TELEGRAM_BOT_TOKEN}/${method}`,{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify(body)});return r.json();}
+async function handleUpdate(update,env){const m=update.message||update.edited_message;if(!m)return;const chatId=String(m.chat?.id||'');let allowed=await getJSON(env,'admin_chat',{id:null});if(!allowed?.id){await putJSON(env,'admin_chat',{id:chatId});allowed={id:chatId};}if(String(allowed.id)!==chatId)return;
+let state=await getJSON(env,'state',null);const now=Date.now();
+if(m.text?.trim()==='/race'){state={status:'running',startedAt:now,finishedAt:null,miles:0,index:0,lat:null,lon:null};await putJSON(env,'state',state);await telegram(env,'sendMessage',{chat_id:m.chat.id,text:'Race tracker started. Send location/live location and updates here.'});return;}
+if(m.text?.trim()==='/finish'){state=state||{startedAt:now};state.status='finished';state.finishedAt=now;state.miles=COURSE_MILES;await putJSON(env,'state',state);await telegram(env,'sendMessage',{chat_id:m.chat.id,text:'🏁 Finish recorded!'});return;}
+if(!state){state={status:'waiting',startedAt:null,finishedAt:null,miles:0,index:0,lat:null,lon:null};}
+if(m.location){const n=nearest(m.location.latitude,m.location.longitude,state.index||0);if(n.index < (state.index||0)-100 && n.d < 0.05){state.miles=COURSE_MILES;state.status='finished';state.finishedAt=state.finishedAt||now;}else{state.index=Math.max(state.index||0,n.index);state.miles=Math.min(COURSE_MILES,CUM_MILES[state.index]);if(state.status==='waiting')state.status='running';}state.lat=m.location.latitude;state.lon=m.location.longitude;state.updatedAt=now;await putJSON(env,'state',state);}
+const text=m.text||m.caption||'';const photos=m.photo||[];if(text||photos.length){let ups=await getJSON(env,'updates',[]);ups.unshift({time:new Date(now).toISOString(),text:text.replace(/^\/race\s*|^\/finish\s*/i,''),photo:photos.length?photos[photos.length-1].file_id:null});ups=ups.slice(0,50);await putJSON(env,'updates',ups);}
+}
+
+export default {async fetch(request,env){const u=new URL(request.url);if(request.method==='GET'&&u.pathname==='/')return new Response(HTML,{headers:{'content-type':'text/html;charset=utf-8'}});if(u.pathname==='/api/state')return json(await getJSON(env,'state',{status:'waiting',miles:0,startedAt:null,finishedAt:null}));if(u.pathname==='/api/updates')return json(await getJSON(env,'updates',[]));if(u.pathname.startsWith('/photo/')){const fileId=decodeURIComponent(u.pathname.slice(7));const r=await telegram(env,'getFile',{file_id:fileId});if(!r.ok)return new Response('Not found',{status:404});const fr=await fetch(`https://api.telegram.org/file/bot${env.TELEGRAM_BOT_TOKEN}/${r.result.file_path}`);return new Response(fr.body,{headers:{'content-type':fr.headers.get('content-type')||'image/jpeg','cache-control':'public,max-age=300'}})}
+if(u.pathname==='/telegram'&&request.method==='POST'){try{const update=await request.json();await handleUpdate(update,env);return new Response('ok')}catch(e){return new Response('error',{status:500})}}
+if(u.pathname==='/setup-webhook'&&request.method==='GET'){const key=u.searchParams.get('key');if(!env.SETUP_KEY||key!==env.SETUP_KEY)return new Response('Unauthorized',{status:401});const base=u.origin;const r=await telegram(env,'setWebhook',{url:base+'/telegram',drop_pending_updates:true});return json(r)}
+return new Response('Not found',{status:404});}};
