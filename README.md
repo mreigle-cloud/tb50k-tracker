@@ -22,3 +22,4 @@ Create a Cloudflare KV namespace and bind it to this Worker as `TRACKER_KV`. Wit
 - `/finish` records a finish.
 
 The route is embedded from the supplied 2026 Taco Bell 50K GPX.
+
